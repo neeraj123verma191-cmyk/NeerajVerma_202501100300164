@@ -1,0 +1,94 @@
+
+import pandas as pd
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, f1_score
+
+from imblearn.over_sampling import SMOTE
+from xgboost import XGBClassifier
+
+
+# Load dataset
+df = pd.read_csv("creditcard.csv")
+
+# Remove rows with missing target
+df = df.dropna(subset=["Class"])
+
+X = df.drop("Class", axis=1)
+y = df["Class"]
+
+# Scale Time and Amount
+scaler = StandardScaler()
+X[["Time", "Amount"]] = scaler.fit_transform(X[["Time", "Amount"]])
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.25, random_state=42, stratify=y
+)
+
+# Handle imbalance using SMOTE
+print("Class distribution:")
+print(y.value_counts())
+smote = SMOTE(random_state=42)
+X_train, y_train = smote.fit_resample(X_train, y_train)
+
+# XGBoost
+xgb = XGBClassifier(
+    n_estimators=100,
+    max_depth=5,
+    learning_rate=0.1,
+    eval_metric="logloss",
+    random_state=42
+)
+
+xgb.fit(X_train, y_train)
+
+# Prediction probabilities
+prob = xgb.predict_proba(X_test)[:, 1]
+
+# Default threshold
+pred = (prob >= 0.5).astype(int)
+
+print("XGBoost ROC-AUC:", roc_auc_score(y_test, prob))
+print("\nClassification Report:")
+print(classification_report(y_test, pred))
+
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, pred))
+
+
+# Find better threshold
+best_threshold = 0.5
+best_f1 = 0
+
+for t in [0.1, 0.2, 0.3, 0.4, 0.5]:
+    prediction = (prob >= t).astype(int)
+    f1 = f1_score(y_test, prediction)
+
+    if f1 > best_f1:
+        best_f1 = f1
+        best_threshold = t
+
+print("\nBest Threshold:", best_threshold)
+print("Best F1 Score:", best_f1)
+
+
+# Feature importance
+importance = pd.Series(
+    xgb.feature_importances_,
+    index=X.columns
+).sort_values(ascending=False)
+
+print("\nTop 10 Important Features:")
+print(importance.head(10))
+
+
+# SVM baseline
+svm = SVC(kernel="rbf", probability=True, class_weight="balanced")
+svm.fit(X_train, y_train)
+
+svm_prob = svm.predict_proba(X_test)[:, 1]
+
+print("\nSVM ROC-AUC:", roc_auc_score(y_test, svm_prob))
